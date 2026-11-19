@@ -58,4 +58,15 @@ beginner-tech-doc/
 
 spec-grill-me/
 └── SKILL.md                 # 技能指令（批量追问 → 建议列表 → 确认收敛）
+
+docs/                                # 本仓库 skill 产出的知识文档（含官方来源清单）
+├── iOS签名与出包知识体系.md           # 通用 App 打包上架知识体系
+└── iOS游戏出包实战（引擎导出Xcode工程）.md  # 游戏出包专项（Unity/Unreal/Cocos）
 ```
+
+## 知识文档（docs/ 目录）
+
+`beginner-tech-doc` skill 实际产出的成果，关键事实均经网络核验（核验日期 2026-11-19，各文档文末附官方与参考链接）：
+
+- **iOS 签名与出包知识体系**——Mach-O / 证书 / 签名 / 描述文件 / ipa / 出包三条路 / 事故排查 / 上架全景 SOP
+- **iOS 游戏出包实战**——Unity / Unreal / Cocos 引擎导出与游戏特有签名场景
