@@ -1,0 +1,12 @@
+# 统一换行符：仓库内统一存 LF，检出时也保持 LF（Windows / macOS 两端一致）
+* text=auto eol=lf
+
+# 二进制文件明确标记，防止被当作文本误转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.mp4 binary
