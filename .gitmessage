@@ -1,0 +1,15 @@
+# <类型>(<范围>): <摘要>
+#
+# 类型：docs / skill / chore / fix
+# 范围：数字车钥匙 / RN桥接 / readme / beginner-tech-doc / spec-grill-me / repo
+# 摘要：中文动词开头，不超过 40 个汉字，不加句号
+#
+# 正文：为什么改、关键改动（可选）
+#
+# 脚注：Refs #123 / BREAKING CHANGE（可选）
+#
+# 示例：
+# docs(数字车钥匙): 收录 iOS 数字车钥匙与蓝牙远程唤醒知识体系
+#
+# - 覆盖三条路线、CCC/CarKey、NFC/UWB/BLE 分工
+# - 补充状态恢复、TN3115、中继攻击与强杀排查

@@ -48,6 +48,32 @@ git pull
 Copy-Item -Recurse -Force .\beginner-tech-doc, .\spec-grill-me "$env:USERPROFILE\.trae-cn\skills\"
 ```
 
+## 提交信息规范
+
+提交信息用 `<类型>(<范围>): <摘要>`，摘要中文动词开头、不超过 40 个汉字，细节放正文。
+
+| 类型 | 用途 |
+|---|---|
+| `docs` | 知识文档、README |
+| `skill` | skill 规则、模板、安装说明 |
+| `chore` | 仓库维护 |
+| `fix` | 修正错误 |
+
+仓库根目录提供了 `.gitmessage` 模板，本地启用：
+
+```powershell
+git config commit.template .gitmessage
+```
+
+示例：
+
+```text
+docs(数字车钥匙): 收录 iOS 数字车钥匙与蓝牙远程唤醒知识体系
+
+- 覆盖三条路线、CCC/CarKey、NFC/UWB/BLE 分工
+- 补充状态恢复、TN3115、中继攻击与强杀排查
+```
+
 ## 文件结构
 
 ```
