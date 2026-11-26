@@ -93,7 +93,7 @@ docs/                                # 本仓库 skill 产出的知识文档（�
 │   ├── Flutter聊天窗口与Agent接入知识体系.md   # 当前项目（Flutter 跨端）：WebSocket / 流式渲染 / 卡片
 │   └── iOS*.md                        # 上一代 iOS 项目知识沉淀（7 篇）
 ├── agent/                             # Agent 服务（Python + FastAPI）
-│   └── Agent服务核心设计与实现知识体系.md       # 核心循环 / 工具系统 / DeepSeek / SOP
+│   └── Agent服务核心设计与实现知识体系.md       # 核心循环 / 工具系统 / DeepSeek / 记忆系统 / SOP
 └── 后端/                              # 业务接口侧
     └── 业务API工具化对接知识体系.md             # OBD / 知识库 RAG / 商城的工具化契约
 ```
@@ -119,7 +119,7 @@ docs/                                # 本仓库 skill 产出的知识文档（�
 
 **agent/**
 
-- **Agent 服务核心设计与实现知识体系**——当前项目（Python + FastAPI + DeepSeek）：核心循环与安全阀 / 工具系统 / LLM 抽象层 / 上下文管理 / FastAPI 服务化 / 响应速度优化 / 安全与防注入 / 从零 SOP / 报错排查
+- **Agent 服务核心设计与实现知识体系**——当前项目（Python + FastAPI + DeepSeek）：核心循环与安全阀 / 工具系统（注册表、槽位、MCP）/ LLM 抽象层（token、思维链、结构化输出）/ 记忆系统 / FastAPI 服务化 / 响应速度与缓存 / 安全与防注入 / 设计模式 / 评估与观测 / 从零 SOP / 报错排查
 
 **后端/**
 
