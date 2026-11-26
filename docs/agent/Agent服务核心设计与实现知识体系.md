@@ -1,0 +1,502 @@
+# Agent 服务核心设计与实现知识体系（新手友好版）
+
+> 覆盖：Agent 与 chatbot 的区别 / 核心循环与三道安全阀 / 工具系统（pydantic + DeepSeek Tool Calls）/ LLM 抽象层 / 上下文管理与压缩 / FastAPI 服务化 / 响应速度优化 / 从零到跑通 SOP / 报错排查 / 速查与踩坑
+> 阅读方式：每个概念先讲"是什么（带比喻）"，再讲"为什么需要它"，最后讲"怎么用 / 怎么排查"。专业名词首次出现均做中英对照，并给一句大白话。
+> 信息核验日期：2026-11-27（DeepSeek 模型名、base_url、Tool Calls 能力、价格均经官方文档核验，动态信息以官方页面为准，文末附链接）。
+> 项目总纲与里程碑见《车务 Agent 项目总览与路线图》；业务接口封装约定见《业务 API 工具化对接知识体系》；App 端见《Flutter 聊天窗口与 Agent 接入知识体系》。
+
+---
+
+## 目录
+
+- [0. 先用一组比喻建立全局](#0-先用一组比喻建立全局)
+- [一、Agent 服务是什么：和聊天机器人的区别](#一agent-服务是什么和聊天机器人的区别)
+- [二、核心循环：Agent 的大脑工作习惯](#二核心循环agent-的大脑工作习惯)
+- [三、工具系统：把业务接口翻译给模型](#三工具系统把业务接口翻译给模型)
+- [四、LLM 抽象层：接入 DeepSeek](#四llm-抽象层接入-deepseek)
+- [五、上下文管理：工作记忆的账本](#五上下文管理工作记忆的账本)
+- [六、FastAPI 服务化：把循环变成在线服务](#六fastapi-服务化把循环变成在线服务)
+- [七、响应速度：用户为什么觉得慢，怎么优化](#七响应速度用户为什么觉得慢怎么优化)
+- [八、实操全流程（SOP）：从零跑通最小 Agent](#八实操全流程sop从零跑通最小-agent)
+- [九、常见报错与排查](#九常见报错与排查)
+- [十、高频速查表](#十高频速查表)
+- [十一、踩坑清单](#十一踩坑清单)
+- [附录：实操入口地图](#附录实操入口地图)
+- [官方与参考链接](#官方与参考链接)
+
+---
+
+## 0. 先用一组比喻建立全局
+
+| 技术概念 | 英文 | 比喻 | 一句话职责 |
+|---|---|---|---|
+| 核心循环 | Agent Loop | 助理"想—做—看—再想"的习惯 | 推理与干活交替，直到任务完成 |
+| 系统提示词 | System Prompt | 助理上岗前发的员工手册 | 定死角色、规矩和调用工具的品味 |
+| 工具调用 | Tool Calls | 助理填单子去业务窗口办事 | 模型输出"调哪个工具 + 什么参数" |
+| 参数模型 | pydantic Model | 单子的标准模板 | 参数声明即校验规则，错填当场退回 |
+| 思考模式 | Thinking Mode | 动手前先打草稿 | 模型先推理再回答，复杂任务更稳 |
+| 推理内容 | reasoning_content | 草稿纸 | 思考模式下模型额外输出，须回传 |
+| 上下文窗口 | Context Window | 工作台一次能摊开的资料 | 模型单次能看到的全部内容上限 |
+| 上下文压缩 | Context Compaction | 旧资料装订成摘要合订本 | 快满时把早期对话压成一段摘要 |
+| 截断摘要 | Truncation & Summary | 快递清单只留关键行 | 工具大结果瘦身后再进工作台 |
+| 限流 | Rate Limit (429) | 窗口排队叫号 | 请求太频密会被 API 拒收 |
+| 幂等键 | Idempotency Key | 订单号防重复下单 | 同一操作重复提交只生效一次 |
+| 流式输出 | Streaming | 打字机逐字蹦 | 用户不用干等完整回答 |
+
+串起来就是一句话：**Agent 服务 = 一个按"想—做—看"循环干活的程序 + 一份员工手册 + 一排贴好标签的业务窗口 + 一个不会撑爆的工作台。**
+
+---
+
+## 一、Agent 服务是什么：和聊天机器人的区别
+
+聊天机器人（chatbot）只做一件事：把用户的话翻译成更得体的话。Agent 多了一个关键部件——**它能决定"动手"，并且能看清动手的结果再决定下一步**。
+
+| 对比项 | chatbot | Agent |
+|---|---|---|
+| 输出 | 只有一段文字 | 文字 + 工具调用指令 |
+| 与业务系统关系 | 无 | 通过工具读写业务数据 |
+| 结束时机 | 每次回复即结束 | 任务完成才结束（多轮循环） |
+| 典型问题 | "P0420 是什么意思？" | "我的车有什么问题？帮我换个件" |
+
+在本项目里，Agent 服务是一个独立新增的 Python 微服务，对上通过 WebSocket 服务 Flutter App，对下通过工具封装调用 OBD、知识库、商城三个已有业务 API，对模型侧通过 DeepSeek API 完成推理。**它自己不实现任何业务规则**——查不查得到故障码、配件多少钱，都由业务 API 说了算。
+
+---
+
+## 二、核心循环：Agent 的大脑工作习惯
+
+### 2.1 是什么
+
+核心循环（Agent Loop）是整个服务唯一称得上"算法"的部分，骨架只有几行：
+
+```python
+# 伪代码：核心循环的全貌
+messages = [system_prompt] + [user_message]
+for _ in range(MAX_ROUNDS):            # 安全阀一：最多 30 轮
+    resp = llm.chat(messages, tools)    # 问模型下一步做什么
+    if not resp.tool_calls:
+        return resp.text               # 模型不给工具调用 = 任务完成
+    for call in resp.tool_calls:
+        result = run_tool(call)         # 真正去调业务 API
+        messages.append(tool_result(call, summarize(result)))
+```
+
+### 2.2 为什么必须有三道安全阀
+
+裸循环在线上一定会出事，三个阀门缺一不可。
+
+**轮数上限（安全阀一）**：模型可能陷入"调工具 → 不满意 → 再调"的死循环，一轮就是一次 API 计费。上限 30 轮，触顶后强制让模型总结现状并收尾。
+
+**错误回喂（安全阀二）**：工具调用失败（接口超时、参数错）不中断流程，把错误信息作为工具结果喂回给模型。模型看到"参数 vin 格式错误"会自己修正重试——这正是 Agent 比传统编排灵活的地方。但要注意区分：**业务错误回喂，协议错误（连不上 LLM、鉴权失败）直接终止**，后者重试也没有意义。
+
+**单工具超时（安全阀三）**：每个工具调用限时 60 秒。业务 API 挂了不能拖死整个循环。
+
+---
+
+## 三、工具系统：把业务接口翻译给模型
+
+### 3.1 Tool Calls 协议是什么
+
+Tool Calls（也常叫 function calling，函数调用）是大模型 API 的标准能力：你在请求里附上工具清单（名字、用途、参数 JSON Schema），模型不执行工具，而是**返回"我想调 get_fault_records，参数是 vin=xxx"这样的结构化指令**，由你的代码去真正执行，再把结果回传给模型继续推理。经官方文档核验，DeepSeek 两个模型（`deepseek-flash`、`deepseek-v4-pro`）均支持 Tool Calls，并提供 `strict` 模式（Beta）——开启后模型输出严格遵循你定义的 JSON Schema，参数格式错误率显著下降。
+
+### 3.2 工具的三位一体结构
+
+每个工具 = **一个 Python 函数（干什么）+ 一个 pydantic 模型（参数长什么样）+ 一段描述（什么时候该用）**。三样东西同源定义，不存在"声明的 schema 和实际实现对不上"的问题：
+
+```python
+from pydantic import BaseModel, Field
+
+class FaultQuery(BaseModel):
+    """查询车辆 OBD 故障记录的参数"""
+    vehicle_id: str = Field(description="车辆 ID，来自会话上下文")
+    days: int = Field(default=30, description="查询最近多少天的记录")
+
+FAULT_QUERY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_fault_records",
+        "description": "查询当前车辆的 OBD 故障码与故障记录。"
+                       "用户问'车有什么毛病/故障灯'时必须先调这个工具。",
+        "parameters": FaultQuery.model_json_schema(),
+    },
+}
+```
+
+注意 description 的写法：**它是写给模型看的用法说明书**。什么时候必须用、什么时候不该用、参数从哪来，都要写清楚。工具挑不对，十有八九是 description 没写好。
+
+### 3.3 危险工具与确认流
+
+工具按风险分级：只读工具（查故障、搜配件）模型可直接调用；写操作工具（创建订单）标记为 `dangerous=True`，循环执行到这里不真调接口，而是向 App 下发 `confirm` 消息，等用户回 `confirm_result` 后才继续。**模型永远没有权限静默下单**，这条红线写死在代码里，不依赖提示词约束。
+
+### 3.4 工具结果必须先瘦身再入上下文
+
+OBD 平台可能返回几百条历史记录，商城搜索可能返回上百个商品。原始 JSON 直接塞给模型有两个后果：费用按 token 线性上涨、噪声把关键信息淹没。约定：**工具结果在进入上下文前必须过截断摘要层**——保留模型推理需要的字段（故障码、名称、价格、严重度），丢掉原始报文细节，条数上限 + 总字节上限双控制。给 App 渲染用的完整数据走卡片通道，与喂模型的瘦身数据是两份。
+
+---
+
+## 四、LLM 抽象层：接入 DeepSeek
+
+### 4.1 OpenAI 兼容格式与 base_url
+
+DeepSeek API 官方兼容 OpenAI SDK 格式（另提供 Anthropic 格式入口），接入只需三样东西（以下经官方文档核验）：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["DEEPSEEK_API_KEY"],   # 密钥走环境变量，不进代码仓库
+    base_url="https://api.deepseek.com",       # OpenAI 格式入口
+)
+resp = client.chat.completions.create(
+    model="deepseek-flash",
+    messages=messages,
+    tools=tools,                # 工具清单
+    stream=True,                # 流式输出，聊天场景必开
+)
+```
+
+### 4.2 模型怎么选
+
+| 模型 | 官方版本 | 适合场景 | 备注（核验于 2026-11-27） |
+|---|---|---|---|
+| `deepseek-flash` | DeepSeek-V4.1-Flash-1017 | 日常对话 + 工具调用，本项目默认 | 上下文 1M；默认开启思考模式；支持视觉 |
+| `deepseek-v4-pro` | DeepSeek-V4-Pro-0813 | 复杂推理兜底（如多工具复杂任务规划） | 并发上限更低（500 vs 2500），价格更高 |
+
+价格按 token 计费且分峰谷时段（非高峰约为高峰一半），动态信息以官方价格页为准（文末链接）。工程上要做的是**费用埋点**：每次请求记录 prompt tokens / completion tokens，会话结束汇总，超预算告警。
+
+### 4.3 思考模式与 reasoning_content 的坑
+
+`deepseek-flash` 默认开启思考模式（thinking mode）——模型回答前先"打草稿"，草稿内容在响应的 `reasoning_content` 字段里。官方文档明确：**携带 `tools` 参数的请求，后续所有请求必须把之前的 `reasoning_content` 完整回传给 API**。多轮工具调用时漏回传会直接报错。这是本项目最容易被踩的坑，处理方式：消息历史入库时把 reasoning_content 和 content 一起存，回传时一起带上。
+
+不想要草稿（追求首字延迟）可在请求里显式关闭思考模式，参数以官方 Thinking Mode 文档为准。
+
+### 4.4 provider 抽象层设计
+
+业务代码永远只依赖一个自己定义的 `LLMClient` 接口（`chat(messages, tools) -> response`），DeepSeek 只是它的一个实现。切换厂商 = 新增一个实现类 + 改一行配置。抽象层顺带统一处理三件事：流式分片解析、429 限流的指数退避重试（retry with exponential backoff——失败后翻倍等一会儿再试，防止越重越挤）、请求日志与费用埋点。
+
+---
+
+## 五、上下文管理：工作记忆的账本
+
+### 5.1 车辆上下文自动注入
+
+会话创建时，App 上报车辆 ID，Agent 服务查出车辆档案（VIN、车型、年款）拼进系统提示词。此后模型调工具自动带上 vehicle_id，用户不需要每句话都报车牌。**上下文里的事实优先于模型的记忆**：车型适配判断以注入的档案为准，防止模型"猜"错车型。
+
+### 5.2 压缩策略
+
+DeepSeek 上下文窗口 1M token，但费用随长度增长、超长也会稀释注意力。约定阈值触发压缩：上下文占用超过预算 70% 时，把最早的一批对话用模型压缩成一段摘要，替换原始消息。摘要必须保留：故障码结论、用户已确认的决策、未完成的待办。实现上是一条普通的消息加工流水线，不需要引入外部记忆组件。
+
+---
+
+## 六、FastAPI 服务化：把循环变成在线服务
+
+### 6.1 WebSocket 端点与会话
+
+FastAPI（核验时最新 0.143+，2026-10 起）原生支持 WebSocket 路由。一个连接对应一个会话：
+
+```python
+@app.websocket("/ws/chat")
+async def chat(ws: WebSocket, token: str = Query(...)):
+    user = await auth(token)                    # 鉴权透传：验用户身份
+    session = await load_session(user)          # 恢复历史会话
+    await ws.accept()
+    while True:
+        msg = await ws.receive_json()           # 收 App 上行消息
+        if msg["type"] == "user_message":
+            await run_agent_loop(session, msg, ws)   # 边跑边推流
+```
+
+`run_agent_loop` 内每产出一段 `text_delta`、每调一次工具（下发 `tool_status`）、每准备好一张卡片（下发 `card`），都立即 `ws.send_json` 推给 App——这就是"流式"的全部含义：**不是等循环跑完再回，而是边跑边播报**。
+
+### 6.2 配置与会话持久化
+
+API key、业务 API 地址、模型名、轮数上限全部走环境变量 + pydantic Settings 加载。会话历史按（用户 ID + 车辆 ID）维度落库，App 重连时恢复——"上次说的那个故障"这类指代靠它支撑。
+
+### 6.3 部署形态
+
+单机起步：`uvicorn` 直接跑，前置 Nginx 做 TLS 与 WebSocket 升级。规模上来再谈多实例与会话粘性（sticky session——同一用户的连接固定路由到同一实例，因为会话状态在内存里），一期不预设。
+
+---
+
+## 七、响应速度：用户为什么觉得慢，怎么优化
+
+> 结论先行：**换成 TypeScript 不会让 AI 回复更快，Python 也不慢**。Agent 服务是典型的 I/O 密集型（I/O-bound，时间都花在等待外部返回，而非自己计算）程序。本章说清时间花在哪、什么真正影响速度、按收益怎么优化。
+
+### 7.1 两个"速度"：总时长与首字延迟
+
+| 速度 | 英文 | 含义 | 由什么决定 |
+|---|---|---|---|
+| 总时长 | Completion Time | 从提问到完整回答结束 | 工具轮数 × 每轮推理 + 工具执行 |
+| 首字延迟 | TTFT（Time To First Token） | 从提问到第一个字出现 | 流式、思考模式、上下文预填长度 |
+
+用户抱怨"慢"，多数时候指的是**首字延迟**——干等没有反馈。流式输出不缩短总时长，却把"感知速度"从十几秒变成 1~2 秒，所以它是必修项而非优化项。
+
+### 7.2 延迟构成：时间是"等"出来的
+
+一次"查故障 → 解读 → 推荐"的多轮回复，耗时构成大致如下（经验估算，非官方数据）：
+
+| 环节 | 典型耗时 | 说明 |
+|---|---|---|
+| LLM 推理 | 占八成左右，每轮 1~5 秒 | 每一轮工具调用都是一次完整的模型推理 |
+| 业务接口执行 | 0.2~1 秒/个 | OBD / 知识库 / 商城的响应时间 |
+| 网络传输 | 0.1~0.3 秒 | App ↔ Agent 服务 ↔ LLM API 的往返 |
+| 服务端代码 | 毫秒级 | JSON 解析、消息转发、schema 校验 |
+
+这张表回答了选型疑虑：**服务端语言的差异淹没在毫秒级里，一次网络抖动就能超过它**。Python 和 TS 都有成熟的异步框架（FastAPI / Node），并发能力都够；真到极高并发，两者都是多实例水平扩展，策略相同；只有"服务端自己做 CPU 密集计算"（如本地跑 embedding 模型）Python 才有劣势——本项目的这类计算全部走 API，不成立。选语言看生态与团队，不看这点速度差。
+
+### 7.3 影响因素排序
+
+| 因素 | 影响 | 说明 |
+|---|---|---|
+| 工具调用轮数 | 大 | 每多一轮 = 多一次完整推理（秒级）；3 个工具串行就是 3+ 次往返 |
+| 思考模式 | 大 | `deepseek-flash` 默认开启，回答前先"打草稿"，首字延迟增加数秒 |
+| 流式输出 | 感知关键 | 决定用户多快看到第一个字 |
+| 上下文长度 | 中 | 预填（prefill，模型读入全部历史的过程）越长越慢，费用同步增长 |
+| 峰谷时段与并发限额 | 中 | 高峰价格翻倍且可能排队，以官方价格页为准 |
+| 服务端语言 | 可忽略 | 毫秒级差异 |
+
+### 7.4 优化清单（按收益排序）
+
+- [ ] **流式必开**：text_delta 边跑边推，tool_status 同步播报，用户全程有反馈
+- [ ] **按轮次分级开关思考模式**：简单查询/闲聊轮次显式关闭思考模式换首字速度，复杂诊断任务保留；按"是否调工具 + 意图"做路由，参数以官方 Thinking Mode 文档为准
+- [ ] **减少工具轮数**：工具 description 写清适用场景，让模型一轮并行发起多个 tool_calls，避免"查 A 不满意再查 B"的串行试探
+- [ ] **控制上下文**：截断摘要层 + 压缩同时优化速度与费用（两者同源，都随 token 线性走）
+- [ ] **耗时埋点与费用埋点一起做**：每轮记录 LLM 推理耗时与工具耗时，"慢在哪"用数据回答，不靠猜
+
+一句话收束：**感知速度靠流式，总时长靠轮数，语言选型不在方程里。**
+
+---
+
+## 八、实操全流程（SOP）：从零跑通最小 Agent
+
+> 本节是"执行线"。目标是 M1 里程碑的完成标志：命令行问"我的车有什么故障"，Agent 调 OBD 测试接口并正确总结。
+
+### 8.0 全景步骤总览（收藏这张）
+
+```
+第 0 步 [环境与账号准备] → 第 1 步 [建项目装依赖] → 第 2 步 [纯聊天跑通]
+→ 第 3 步 [加第一个工具] → 第 4 步 [升级为 WebSocket 服务]
+→ 第 5 步 [接真实业务 API] → 第 6 步 [部署]
+```
+
+### 8.1 第 0 步：环境与账号准备
+
+| 准备项 | 入口 | 要点 |
+|---|---|---|
+| Python 3.11+ | python.org 或系统包管理器 | `python --version` 验证 |
+| DeepSeek 账号与 API key | platform.deepseek.com → API Keys → 创建 | **充值需预付**；key 只显示一次，立刻存好；导出为环境变量 `DEEPSEEK_API_KEY` |
+| OBD 测试接口文档与账号 | 找业务后端要 | 测试环境地址 + 测试用户 token |
+
+PowerShell 设置环境变量（当前会话有效）：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "sk-你的key"   # 密钥不进任何代码与文档
+```
+
+### 8.2 第 1 步：建项目装依赖
+
+```powershell
+mkdir agent-service; cd agent-service
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install openai fastapi "uvicorn[standard]" pydantic httpx rich
+```
+
+依赖四个的分工：`openai` 是 LLM SDK（指向 DeepSeek），`fastapi` + `uvicorn` 是 Web 框架与服务器，`httpx` 是异步 HTTP 客户端（调业务 API 用），`rich` 美化命令行输出。
+
+### 8.3 第 2 步：纯聊天跑通
+
+先不接工具，验证"App 服务 → DeepSeek"链路：一个 20 行的命令行脚本，循环读用户输入、调 `client.chat.completions.create`、流式打印。**首字能蹦出来，说明密钥、网络、SDK 三件事全部正常**——这层不通，后面的一切调试都是空中楼阁。
+
+### 8.4 第 3 步：加第一个工具
+
+按 3.2 节的三位一体结构写 `get_fault_records`：pydantic 参数模型 + 工具 schema + 假实现（先返回写死的 mock 数据）。跑通"问一句 → 模型发起 tool_calls → 本地执行 → 回传 → 模型总结"。这一步验证的是**循环逻辑**，与真实接口无关，mock 数据反而便于控制边界。
+
+### 8.5 第 4 步：升级为 WebSocket 服务
+
+把循环包进 6.1 节的 FastAPI WebSocket 端点，文字输出从 print 改为 `text_delta` 消息推送。用 wscat 或简短 Python 脚本模拟 App 连接自测。
+
+### 8.6 第 5 步：接真实业务 API
+
+把 mock 换成 `httpx` 真调 OBD 测试环境（鉴权与封装约定见《业务 API 工具化对接知识体系》）。此时应同步加：截断摘要层（3.4 节）、单工具超时、错误回喂。
+
+### 8.7 第 6 步：部署
+
+`uvicorn main:app --host 0.0.0.0 --port 8000` 起服务，前置 Nginx 配 TLS 与 `/ws/chat` 的 WebSocket 升级头。上线前确认三件事：密钥在环境变量里、日志有费用埋点、轮数上限生效。
+
+---
+
+## 九、常见报错与排查
+
+共同规律：**故障按链路分布——密钥与网络在最前面，参数与 schema 在中间，上下文与费用在最后**。从前往后排查，别跳步。
+
+### 9.1 事故一：401 Authentication Fails
+
+**现象**：
+
+```text
+openai.AuthenticationError: Error code: 401 - {'message': 'Authentication Fails'}
+```
+
+**原理（新手版）**：API 网关不认你出示的钥匙。要么 key 抄错/过期，要么环境变量没在当前会话生效，要么 key 前后混入了空格。
+
+**怎么办**：
+1. `echo $env:DEEPSEEK_API_KEY` 确认变量有值且无多余字符；
+2. 到 platform.deepseek.com 确认 key 状态为启用；
+3. 换一个新 key 重试（key 只在创建时完整显示一次，丢了只能重建）。
+
+**预防**：密钥统一走 `.env` + pydantic Settings 加载，启动时校验存在性，缺失直接拒绝启动。
+
+### 9.2 事故二：429 限流
+
+**现象**：
+
+```text
+openai.RateLimitError: Error code: 429 - rate limit reached
+```
+
+**原理**：请求频率或并发超出账户配额。开发期高频重启脚本最容易触发。
+
+**怎么办**：
+1. 抽象层统一加指数退避重试（1s → 2s → 4s，最多 5 次）；
+2. 检查是否有脚本在循环里裸调 API；
+3. 长期高频需求在官方文档确认并发限额并申请提升。
+
+**预防**：所有 LLM 调用必须经过抽象层（自带重试），业务代码禁止直连 SDK。
+
+### 9.3 事故三：上下文超限
+
+**现象**：
+
+```text
+openai.BadRequestError: Error code: 400 - This model's maximum context length is exceeded
+```
+
+**原理**：消息历史 + 工具结果总 token 超过窗口上限。通常是大结果工具（历史故障全量导出）反复入上下文导致的。
+
+**怎么办**：
+1. 检查最近一次工具结果是否未过截断摘要层；
+2. 手动清掉超长历史，触发一次压缩后继续；
+3. 确认 70% 阈值压缩逻辑是否生效（打日志看每次请求的实际 token 数）。
+
+**预防**：工具结果入上下文前强制过摘要层；每次请求记录 prompt tokens，接近阈值提前压缩。
+
+### 9.4 事故四：模型发起的工具参数不符合 schema
+
+**现象**：`tool_calls` 里的 `arguments` JSON 解析失败，或字段缺失/类型错误。
+
+**原理**：模型生成 JSON 偶发不合规（尤其复杂嵌套参数）。DeepSeek 的 `strict` 模式（Beta）可在服务端强制校验 schema。
+
+**怎么办**：
+1. 给该工具开启 `strict: true`；
+2. 校验失败不中断，把 pydantic 的报错信息作为工具结果回喂模型重试；
+3. 参数模型简化：嵌套层级压扁、必填项减少，复杂参数拆成多次简单调用。
+
+**预防**：新工具上线前用 20 条真实问法做回归用例集，参数生成失败率超过 2% 就重构参数设计。
+
+### 9.5 事故五：思考模式 + 工具调用报错
+
+**现象**：多轮工具调用中途 API 返回 400，提示缺少 reasoning_content 或消息格式无效。
+
+**原理**：`deepseek-flash` 默认思考模式，官方要求**携带 tools 的请求必须把历史 reasoning_content 完整回传**。自己组装 messages 时漏掉就会报错。
+
+**怎么办**：
+1. 检查消息历史组装逻辑：assistant 消息是否同时保存并回传了 `reasoning_content` 与 `tool_calls`；
+2. 使用 OpenAI SDK 时把 reasoning_content 放入 `extra_body` 回传（以官方文档示例为准）。
+
+**预防**：消息入库即含 reasoning_content，组装函数统一处理，禁止在业务代码里手工拼 assistant 消息。
+
+### 9.6 事故六：WebSocket 频繁断连
+
+**现象**：App 端连接数十秒自动断开，流式中断。
+
+**原理**：中间层（Nginx / 运营商网关）对空闲连接有超时，或代理未配置 WebSocket 升级头。
+
+**怎么办**：
+1. Nginx 确认 `proxy_set_header Upgrade/Connection` 与较长的 `proxy_read_timeout`；
+2. App 端实现心跳 ping + 断线重连 + 消息缓冲（前端篇有完整方案）；
+3. 服务端区分"用户主动离开"与"异常断开"，前者销毁会话，后者保留待重连恢复。
+
+**预防**：把"断线重连后恢复会话"当作 M2 的验收项，而不是上线后再补。
+
+---
+
+## 十、高频速查表
+
+**DeepSeek 接入参数**（核验于 2026-11-27，动态以官方为准）：
+
+| 项 | 值 |
+|---|---|
+| base_url（OpenAI 格式） | `https://api.deepseek.com` |
+| base_url（Anthropic 格式） | `https://api.deepseek.com/anthropic` |
+| 默认模型 | `deepseek-flash` |
+| 复杂推理模型 | `deepseek-v4-pro` |
+| 上下文长度 | 1M tokens |
+| 最大输出 | 384K tokens |
+| Tool Calls | 两个模型均支持；`strict` 模式（Beta）可强制 schema 校验 |
+| 计费 | 按 token 分峰谷计费，以官方价格页为准 |
+| API key 入口 | platform.deepseek.com/api_keys |
+
+**工具设计验收 checklist**：
+
+- [ ] description 写清"什么场景必须用 / 什么场景不该用"
+- [ ] 参数 ≤ 5 个，嵌套 ≤ 1 层，每个参数有 description
+- [ ] 结果过截断摘要层（条数 + 字节双上限）
+- [ ] 写操作工具标记 dangerous，走 confirm 流程
+- [ ] 60 秒超时 + 失败回喂文案人类可读
+- [ ] 20 条真实问法回归用例，参数生成失败率 < 2%
+
+**循环参数默认值**：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| MAX_ROUNDS | 30 | 触顶强制收尾 |
+| 工具超时 | 60s | httpx timeout |
+| 压缩阈值 | 70% | 占窗口预算比例 |
+| 重试 | 指数退避 ×5 | 仅限 429/5xx |
+
+---
+
+## 十一、踩坑清单
+
+1. **提示词不是安全边界**。"禁止下单"写进 prompt 但代码里不拦截，等于没防。安全约束必须落在代码结构上（危险工具分支）。
+2. **工具 description 是给模型看的，不是给人看的**。写"查询故障记录接口"没用，要写"用户问到车况/故障灯/异象时必须先调用"。
+3. **mock 阶段别接真接口**。第 3 步用假数据把循环逻辑测干净，否则循环 bug 和接口 bug 搅在一起没法定位。
+4. **reasoning_content 要入库**。只在内存里传，进程一重启多轮对话就残缺，复现 9.5 事故。
+5. **别用 time.sleep 做限流**。异步服务里阻塞整个事件循环；用抽象层里的异步退避重试。
+6. **费用从第一天就埋点**。上线后才发现某类问法平均烧 5 万 token，返修成本远高于第一天加一行日志。
+
+---
+
+## 附录：实操入口地图
+
+| 要做的事 | 位置 | 操作说明 |
+|---|---|---|
+| 创建/查看 API key | platform.deepseek.com → 左侧 API Keys → 创建 key | 只显示一次；余额充值在同站"充值"页 |
+| 查最新价格与峰谷时段 | api-docs.deepseek.com → Models & Pricing | 价格随时可能调整，上线前必查 |
+| 验证 key 是否可用 | 终端跑 8.3 节脚本 | 首字输出即通过 |
+| 查看 Tool Calls 官方示例 | api-docs.deepseek.com → guides → Tool Calls | strict 模式说明在同一页 |
+| 本地起服务 | `uvicorn main:app --reload --port 8000` | --reload 仅开发用 |
+| 模拟 App 连接自测 | wscat 或 Python websockets 脚本连 `ws://localhost:8000/ws/chat` | 先测文本流，再测卡片 |
+
+**排障"动手顺序"速查**（收藏）：
+
+```
+① 密钥与环境变量（401 类）
+② 直连最小脚本（网络与 SDK）
+③ 查请求日志里的 tool_calls 原始 JSON（参数类）
+④ 查 prompt tokens 数（上下文与费用类）
+⑤ 最后才改 prompt 与模型参数
+```
+
+---
+
+## 官方与参考链接
+
+- DeepSeek API 首次调用指南（base_url / 模型名）：https://api-docs.deepseek.com/
+- DeepSeek 模型与价格（动态信息，以官方页面为准）：https://api-docs.deepseek.com/quick_start/pricing/
+- DeepSeek Tool Calls 指南（含 strict 模式）：https://api-docs.deepseek.com/guides/tool_calls/
+- DeepSeek 思考模式说明（reasoning_content 回传规则）：https://api-docs.deepseek.com/guides/thinking_mode/
+- DeepSeek API key 入口：https://platform.deepseek.com/api_keys
+- FastAPI 官方文档（WebSocket / 依赖注入）：https://fastapi.tiangolo.com/
+- FastAPI 发布说明：https://fastapi.tiangolo.com/release-notes/
+- pydantic 官方文档：https://docs.pydantic.dev/
+- OpenAI Python SDK：https://github.com/openai/openai-python

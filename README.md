@@ -87,18 +87,40 @@ beginner-tech-doc/
 spec-grill-me/
 └── SKILL.md                 # 技能指令（批量追问 → 建议列表 → 确认收敛）
 
-docs/                                # 本仓库 skill 产出的知识文档（含官方来源清单）
-├── iOS签名与出包知识体系.md           # 通用 App 打包上架知识体系
-├── iOS游戏工程与出包知识体系.md       # 游戏工程专项（Unity/Unreal/Cocos/Godot + 运行原理/性能/业务映射）
-├── iOS与RN桥接知识体系.md            # RN 与 iOS 原生桥接（旧桥/新架构/版本适配/SDK 封装）
-└── iOS数字车钥匙与蓝牙远程唤醒知识体系.md  # 数字车钥匙三条路线 / CCC 与 CarKey / BLE 状态恢复
+docs/                                # 本仓库 skill 产出的知识文档（按领域分文件夹，含官方来源清单）
+├── 车务Agent项目总览与路线图.md        # 车务 Agent 项目跨领域总纲：架构 / 协议 / 里程碑 / 风险
+├── 前端/                              # App 端
+│   ├── Flutter聊天窗口与Agent接入知识体系.md   # 当前项目（Flutter 跨端）：WebSocket / 流式渲染 / 卡片
+│   └── iOS*.md                        # 上一代 iOS 项目知识沉淀（7 篇）
+├── agent/                             # Agent 服务（Python + FastAPI）
+│   └── Agent服务核心设计与实现知识体系.md       # 核心循环 / 工具系统 / DeepSeek / SOP
+└── 后端/                              # 业务接口侧
+    └── 业务API工具化对接知识体系.md             # OBD / 知识库 RAG / 商城的工具化契约
 ```
 
 ## 知识文档（docs/ 目录）
 
-`beginner-tech-doc` skill 实际产出的成果，关键事实均经网络核验（各文档文内标注核验日期，文末附官方与参考链接；经验性内容标注可靠性边界）：
+`beginner-tech-doc` skill 实际产出的成果，关键事实均经网络核验（各文档文内标注核验日期，文末附官方与参考链接；经验性内容标注可靠性边界）。按领域分文件夹组织：
 
+**根目录（跨领域总纲）**
+
+- **车务 Agent 项目总览与路线图**——项目定位 / 三端架构 / 消息协议 / 关键决策 / 技术选型 / M1~M4 里程碑与任务分解 / 协作约定 / 风险清单
+
+**前端/**
+
+- **Flutter 聊天窗口与 Agent 接入知识体系**——当前项目（Flutter 跨端）：聊天页难点 / 七种消息渲染 / WebSocket 心跳退避缓冲 / 流式渲染 / 三种卡片 / confirm 流程 / SOP 与排障
 - **iOS 签名与出包知识体系**——Mach-O / 证书 / 签名 / 描述文件 / ipa / 出包三条路 / 事故排查 / 上架全景 SOP
 - **iOS 游戏工程与出包知识体系**——四大引擎导出、运行原理、从零到真机 SOP、签名/崩溃/性能排查、研发与发行协作
 - **iOS 与 RN 桥接知识体系**——双世界模型与线程、旧桥/新架构（JSI/TurboModule/Codegen）双语实操、0.75+iOS 15 版本适配、原生 SDK 封装实战与升级 SOP
 - **iOS 数字车钥匙与蓝牙远程唤醒知识体系**——三条路线选型、CCC 与 Apple Wallet CarKey、NFC/UWB/BLE 三通道分工、CoreBluetooth 状态恢复与 TN3115 规则、最小可跑 Demo 与排障速查
+- **iOS 蓝牙设备连接与 OTA 固件升级知识体系**——连接后工程实践 / 断开重连状态机 / 指数退避 / OTA（DFU）全流程 / Nordic DFU 集成 / 排障与速查
+- **iOS 内存与性能调优知识体系**——内存布局 / ARC 与引用关系 / 循环引用与泄漏排查 / Memory Graph 与 Instruments 四件套 / 启动、卡顿、包体积优化 / 性能回归 SOP
+- **iOS 开发语言与运行时知识体系**——OC / Swift / C++ 选型与混编 / OC Runtime（消息转发、Method Swizzling、KVO）/ Swift 派发与 Swift 6 并发 / 与 UIKit/SwiftUI 的协作
+
+**agent/**
+
+- **Agent 服务核心设计与实现知识体系**——当前项目（Python + FastAPI + DeepSeek）：核心循环与安全阀 / 工具系统 / LLM 抽象层 / 上下文管理 / FastAPI 服务化 / 响应速度优化 / 从零 SOP / 报错排查
+
+**后端/**
+
+- **业务 API 工具化对接知识体系**——当前项目：三域接口最小契约 / 工具封装五条约定 / 鉴权透传与数据隔离 / 精确匹配 + RAG 双通道 / 下单安全 / 接入 SOP
