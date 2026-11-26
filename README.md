@@ -108,7 +108,7 @@ docs/                                # 本仓库 skill 产出的知识文档（�
 
 **前端/**
 
-- **Flutter 聊天窗口与 Agent 接入知识体系**——当前项目（Flutter 跨端）：聊天页难点 / 七种消息渲染 / WebSocket 心跳退避缓冲 / 流式渲染 / 三种卡片 / confirm 流程 / SOP 与排障
+- **Flutter 聊天窗口与 Agent 接入知识体系**——当前项目（Flutter 跨端）：聊天页难点 / 七种消息渲染 / WebSocket 心跳退避缓冲 / 流式渲染 / 三种卡片 / confirm 流程 / 输出安全 / SOP 与排障
 - **iOS 签名与出包知识体系**——Mach-O / 证书 / 签名 / 描述文件 / ipa / 出包三条路 / 事故排查 / 上架全景 SOP
 - **iOS 游戏工程与出包知识体系**——四大引擎导出、运行原理、从零到真机 SOP、签名/崩溃/性能排查、研发与发行协作
 - **iOS 与 RN 桥接知识体系**——双世界模型与线程、旧桥/新架构（JSI/TurboModule/Codegen）双语实操、0.75+iOS 15 版本适配、原生 SDK 封装实战与升级 SOP
@@ -119,7 +119,7 @@ docs/                                # 本仓库 skill 产出的知识文档（�
 
 **agent/**
 
-- **Agent 服务核心设计与实现知识体系**——当前项目（Python + FastAPI + DeepSeek）：核心循环与安全阀 / 工具系统 / LLM 抽象层 / 上下文管理 / FastAPI 服务化 / 响应速度优化 / 从零 SOP / 报错排查
+- **Agent 服务核心设计与实现知识体系**——当前项目（Python + FastAPI + DeepSeek）：核心循环与安全阀 / 工具系统 / LLM 抽象层 / 上下文管理 / FastAPI 服务化 / 响应速度优化 / 安全与防注入 / 从零 SOP / 报错排查
 
 **后端/**
 
