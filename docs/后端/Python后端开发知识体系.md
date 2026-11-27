@@ -923,7 +923,7 @@ Error code: 402 - Insufficient Balance
 | 模型平台（API Key/充值） | <https://platform.deepseek.com/> | Key 只显示一次，存环境变量 |
 | FastAPI 交互文档 | 浏览器：`http://127.0.0.1:8000/docs` | Try it out 直接测接口 |
 | 看模型 API 细节 | <https://api-docs.deepseek.com/> | 思考模式、工具调用、模型名 |
-| 消息协议合同 | 仓库 docs/车务Agent项目总览与路线图.md 第三章 | 七种消息 + 三种卡片 schema，M2 冻结 |
+| 消息协议合同 | 仓库 docs/总览/车务Agent项目总览与路线图.md 第三章 | 七种消息 + 三种卡片 schema，M2 冻结 |
 
 **排障"动手顺序"速查**（收藏）：
 

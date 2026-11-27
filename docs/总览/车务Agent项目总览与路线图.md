@@ -249,7 +249,7 @@ App 和 Agent 服务之间走 WebSocket（或 SSE）长连接，消息一律是�
 
 | 文档 | 位置 | 管什么 |
 |---|---|---|
-| 本文 | docs/车务Agent项目总览与路线图.md | 全局架构、协议、里程碑、风险 |
+| 本文 | docs/总览/车务Agent项目总览与路线图.md | 全局架构、协议、里程碑、风险 |
 | Agent 服务篇 | docs/agent/Agent服务核心设计与实现知识体系.md | 核心循环、工具系统、DeepSeek 接入、FastAPI 服务化、SOP 与排障 |
 | Flutter 前端篇 | docs/前端/Flutter聊天窗口与Agent接入知识体系.md | WebSocket 接入、流式渲染、卡片 Widget、SOP 与排障 |
 | 业务后端篇 | docs/后端/业务API工具化对接知识体系.md | 三个业务接口的工具封装约定、鉴权、RAG、SOP 与排障 |
