@@ -518,31 +518,30 @@ TOOLS_SCHEMA = [{                         # 喂给模型的"工具说明书"
 
 ### 6.2 消息协议：七种消息（与 App 端同一张表）
 
-前后端共用一张"暗号表"，每条消息都是一个带 `type` 的 JSON：
+前后端共用一张"暗号表"——协议合同定稿于《车务Agent项目总览与路线图》第三章（M2 里程碑评审冻结），每条消息都是一个带 `type` 的 JSON：
 
 | type | 方向 | 作用 | 要点 |
 |---|---|---|---|
-| `user_message` | App → 服务 | 用户发的消息 | 服务端收到即开跑 Agent 循环 |
+| `user_message` | App → 服务 | 用户发言 + 车辆 ID + 会话 ID | 服务端据此绑定会话并开跑 Agent 循环 |
 | `text_delta` | 服务 → App | 回答的增量片段 | 高频消息，一个字一段地推 |
-| `tool_status` | 服务 → App | 过程播报 | "正在查询故障记录…"，让用户知道在干活 |
-| `card` | 服务 → App | 结构化卡片 | 按 `cardType` 分流（故障卡/配件卡等），前端点击可跳转 |
-| `confirm` | 服务 → App | 下单确认框 | 必须带 `confirmId`，超时要失效 |
-| `confirm_result` | App → 服务 | 用户点了确认/取消 | 服务端据此继续或终止业务流程 |
-| `error` | 服务 → App | 出错提示 | App 显示红字 + 重试按钮 |
+| `tool_status` | 服务 → App | 工具调用过程播报 | "正在查询故障记录…"；取消重答也复用它提示 |
+| `card` | 服务 → App | 结构化卡片 | 按 `cardType` 分三种：fault 故障记录卡 / knowledge 知识解读卡 / part 配件商品卡，点击可跳转 |
+| `confirm` | 服务 → App | 危险操作（下单等写操作）确认请求 | 必须带 `confirmId`，超时要失效 |
+| `confirm_result` | App → 服务 | 用户对确认操作的答复 | 服务端据此继续或终止业务流程 |
+| `error` | 服务 → App | 出错告知 | 红字 + 重试按钮；重试 = 重发上一条 `user_message` |
 
-**为什么要定死协议**：前后端可以并行开发——前端照协议先画界面、后端照协议先造假数据，最后联调只需要对暗号。新增功能先加协议类型，再分别实现。
+**为什么要定死协议**：前后端可以并行开发——前端照协议先画界面、后端照协议先造假数据，最后联调只需要对暗号。协议 v1 已在 M2 评审冻结，改动协议 = 三端同步改：先改总览篇的合同，再分别动三端代码。
 
 ### 6.3 服务端骨架：WebSocket 端点
 
 ```python
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Query, WebSocket
 
 app = FastAPI()
 
 @app.websocket("/ws/chat")
-async def chat(ws: WebSocket):
+async def chat(ws: WebSocket, token: str = Query("")):   # 鉴权透传：App 连接时带 ?token=xxx
     await ws.accept()                        # 完成握手（对讲机接通）
-    await ws.send_json({"type": "session_ready"})
     while True:
         msg = await ws.receive_json()        # 收 App 的消息
         if msg["type"] == "user_message":
@@ -554,15 +553,20 @@ async def chat(ws: WebSocket):
 
 `run_agent_stream` 的产出节奏：每生成一段文字推 `text_delta`、每次调工具推 `tool_status`、准备好卡片推 `card`——这就是"流式"的全部含义：**不等循环跑完，边跑边播报**。生产版的会话管理、鉴权（连接握手时验 token）、并发控制见 agent 文档第六章。
 
-**没有 App 也能自测**——`pip install websockets` 后用十几行脚本模拟 App 连接（消息字段以两端约定的协议为准）：
+**没有 App 也能自测**——`pip install websockets` 后用十几行脚本模拟 App 连接（字段以协议合同为准，见总览篇第三章）：
 
 ```python
 import asyncio, json
 import websockets
 
 async def main():
-    async with websockets.connect("ws://127.0.0.1:8000/ws/chat") as ws:
-        await ws.send(json.dumps({"type": "user_message", "content": "P0135 是什么意思？"}))
+    async with websockets.connect("ws://127.0.0.1:8000/ws/chat?token=test") as ws:
+        await ws.send(json.dumps({       # user_message：发言 + 车辆 ID + 会话 ID
+            "type": "user_message",
+            "content": "P0135 是什么意思？",
+            "vehicle_id": "VIN-12345",
+            "session_id": "s-001",
+        }))
         async for raw in ws:                 # 逐条接收服务端推送
             msg = json.loads(raw)
             print(msg["type"], "->", msg)    # 预期先 tool_status，再连续 text_delta，最后 card/结束
@@ -578,7 +582,7 @@ App 收到消息后的渲染规则由 Flutter 文档定义，后端只需要记�
 
 ### 6.5 断线重连与心跳（必修，不是优化项）
 
-聊天页三大难点之一是"连接不可靠"：切后台、进电梯、弱网都会断线。后端要做的：① 心跳（Heartbeat Ping，定期喊一声"还在吗"）及时发现死连接；② 会话历史落库，App 重连后按会话 ID 恢复上下文；③ 未推送完的消息缓冲或允许重取。App 端配套是退避重连（Backoff Reconnect，没人接就隔久一点再拨）——两端约定见 Flutter 文档第三章。
+聊天页三大难点之一是"连接不可靠"：切后台、进电梯、弱网都会断线。生命周期约定（与 Flutter 文档 3.2 对齐）：**App 侧**每 30 秒发一次心跳 ping，连续两个周期收不到任何下行（含 pong）就判定假在线、主动断开；**服务端**收到 ping 回 pong、保证任何下行都算活性信号，另外做好三件事：① 会话历史落库，App 重连后按会话 ID 恢复上下文；② 未推送完的消息缓冲或允许重取；③ 及时清理断开的死连接。App 端配套是退避重连（Backoff Reconnect，1 秒起步翻倍、上限 30 秒）。
 
 ### 6.6 数据接口的路径选型：Agent 调还是 App 调？
 
@@ -919,7 +923,7 @@ Error code: 402 - Insufficient Balance
 | 模型平台（API Key/充值） | <https://platform.deepseek.com/> | Key 只显示一次，存环境变量 |
 | FastAPI 交互文档 | 浏览器：`http://127.0.0.1:8000/docs` | Try it out 直接测接口 |
 | 看模型 API 细节 | <https://api-docs.deepseek.com/> | 思考模式、工具调用、模型名 |
-| Agent 协议与 App 端 | 仓库 docs/agent/、docs/前端/ | 七种消息协议以 Flutter 文档为准 |
+| 消息协议合同 | 仓库 docs/车务Agent项目总览与路线图.md 第三章 | 七种消息 + 三种卡片 schema，M2 冻结 |
 
 **排障"动手顺序"速查**（收藏）：
 
